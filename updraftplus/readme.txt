@@ -3,7 +3,7 @@ Contributors: Backup with UpdraftPlus, DavidAnderson, pmbaldha, DNutbourne, apor
 Tags: backup, database backup, wordpress backup, cloud backup, migration
 Requires at least: 3.9
 Tested up to: 7.1
-Stable tag: 1.26.13
+Stable tag: 1.26.14
 Author URI: https://updraftplus.com
 Donate link: https://david.dw-perspective.org.uk/donate
 License: GPLv3 or later
@@ -178,6 +178,32 @@ This problem is probably caused by your account being starved of resources by yo
 The [UpdraftPlus backup blog](https://updraftplus.com/news/) is the best place to learn in more detail about any important changes.
 
 N.B. Paid versions of UpdraftPlus Backup / Restore have a version number which is 1 higher in the first digit, and has an extra component on the end, but the changelog below still applies. i.e. changes listed for 1.16.32.x of the free version correspond to changes made in 2.16.32.x of the paid version.
+
+= 1.26.14 - 26/Oct/2026 =
+
+* FEATURE: SFTP/SCP remote storage now supports modern host key algorithms like Ed25519 and also new cryptographies
+* FEATURE: Improve the restoration of the 'uploads' entity to be more efficient, and add the 'UPDRAFTPLUS_RESTORE_DELETE_OLD_UPLOAD_FILES' constant to allow the deletion of leftover files in the 'uploads' directory that are not part of the backup file
+* FIX: Fixed a JS error and incorrect checkbox state handling on the auto-backup before update prompt.
+* FIX: Prevent a fatal TypeError on PHP 8+ when an admin URL contains an "action" query argument as an array.
+* TWEAK: Disabled the option to automatically add websites to UDCentral upon connection by default. Users must now explicitly enable this option if they want websites to be added automatically upon connection.
+* TWEAK: Adjusted the Abort Backup popup icon sizing and added the missing "X" icon to the Close button on the backup completion popup.
+* TWEAK: Avoid warning by handling $_ENV variable.
+* TWEAK: Change the 'pre_database_backup_setup' action hook name to 'updraftplus_pre_database_backup_setup'
+* TWEAK: Check the existence of the user's folder before doing any UpdraftVault storage-related oprations to ensure the same directory is used even if the home/site URL has changed from using "www" to without using "www" or vice versa.
+* TWEAK: Enforce the WordPress DISALLOW_FILE_MODS constant to block all restore operations (including database) via the admin UI, WP-CLI, and the core restore method.
+* TWEAK: Ensure SFTP/SCP remote storage works with the phpseclib3 library upgrade, including SCP mode, Ed25519 SSH keys, database restores and rescans
+* TWEAK: Exclude the unused common-libs sub-libraries updraft-tasks and updraft-theme from the build to reduce the plugin size
+* TWEAK: Improved the remote storage UI with cleaner spacing, layout, font sizes, colors, and clearer wording, while fixing tooltip visibility for UpdraftVault.
+* TWEAK: Removed dead code and references left behind by the retirement of the Tour feature.
+* TWEAK: Removed implicit nullable type hints in the bundled PEAR library (HTTP_Request2_CookieJar and Net_URL2) to resolve PHP 8.4 deprecation notices
+* TWEAK: Removed the CURLOPT_BINARYTRANSFER cURL option (a no-op since PHP 5.1.2) from the Dropbox consumer to prevent deprecation warnings on PHP 8.4+
+* TWEAK: Removed the UDP_Google_Client type hint from the $client parameter in UDP_Google_Http_REST::decodeHttpResponse() to resolve a PHP 8.4 deprecation notice caused by implicit nullable typing 
+* TWEAK: Resolve PHP 8.2+ deprecation warning by explicitly declaring $commands property on UpdraftPlus_CLI_Command 
+* TWEAK: Resolve an SQL error when backing up the sitemeta table on multisite using mysqldump on Windows.
+* TWEAK: The "Follow TeamUpdraft" social media notice now stays hidden for 84 days once dismissed
+* TWEAK: Update all links in the udaddons folder to use teamupdraft.com instead of updraftplus.com.  
+* TWEAK: Upgraded phpseclib to the version 3 while still maintaining compatibility with the phpseclib version 2
+* TWEAK: Addressed several issues identified during Plugin Check (PCP) validation and improved overall plugin compatibility and code quality.
 
 = 1.26.13 - 19/Oct/2026 =
 
@@ -2221,4 +2247,4 @@ Non-English translators are provided by volunteers, and wordpress.org does not g
 We recognise and thank those mentioned at https://updraftplus.com/acknowledgements/ for code and/or libraries used and/or modified under the terms of their open source licences.
 
 == Upgrade Notice ==
-* 1.26.13: Important security updates (.9 to .13) - see the changelog for details. A recommended update for all; please update immediately.
+* 1.26.14: Enhanced SFTP/SCP remote storage support for modern host key algorithms and cryptographies, and more efficient restoration of uploads entity backup file, plus various fixes and small tweaks - see the changelog for details. A recommended update for all; please update immediately.

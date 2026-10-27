@@ -665,6 +665,17 @@ class Updraft_Restorer {
 	public function perform_restore($entities_to_restore, $restore_options) {
 		global $updraftplus;
 		
+		// Block all restore operations when DISALLOW_FILE_MODS is active. This is the final enforcement point (the UI and WP-CLI checks are early conveniences); a resumed restore re-enters this method and is re-checked.
+		if (defined('DISALLOW_FILE_MODS') && DISALLOW_FILE_MODS) {
+			$error_message = sprintf(
+				/* translators: %s: Constant name (DISALLOW_FILE_MODS) */
+				__('Restore operations are disabled by the %s constant.', 'updraftplus'),
+				'DISALLOW_FILE_MODS'
+			).' '.__('To restore this site, temporarily remove the constant from wp-config.php or set it to false.', 'updraftplus');
+			$updraftplus->log($error_message, 'error');
+			return new WP_Error('restore_disallowed', $error_message);
+		}
+
 		$updraftplus->log_restore_update(array('type' => 'state', 'stage' => 'verifying', 'data' => implode(', ', array_flip($entities_to_restore))));
 
 		// Now log. We first remove any encryption passphrase from the log data.
@@ -702,6 +713,10 @@ class Updraft_Restorer {
 		
 		$updraftplus->jobdata_set('second_loop_entities', $second_loop);
 		$updraftplus->jobdata_set('backup_timestamp', $timestamp);
+
+		// The timestamp when the restoration process started
+		$restore_timestamp = $updraftplus->jobdata_get('restore_timestamp', false);
+		if (!$restore_timestamp) $updraftplus->jobdata_set('restore_timestamp', time());
 		
 		// Use a site option, as otherwise on multisite when all the array of options is updated via UpdraftPlus_Options::update_site_option(), it will over-write any restored UD options from the backup
 		update_site_option('updraft_restore_in_progress', $updraftplus->nonce);
@@ -780,6 +795,14 @@ class Updraft_Restorer {
 
 				do_action('updraft_restored_archive', $file, $type, $restore_result, $fkey, $timestamp);
 
+			}
+
+			// Scan and delete leftover files in the "uploads" directory that are not part of the backup file or don't exist in the backup file
+			if ('uploads' == $type && apply_filters('updraftplus_restore_uploads_in_one_go', !class_exists('UpdraftPlusAddOn_MultiSite')) && (!defined('UPDRAFTPLUS_RESTORE_DELETE_OLD_UPLOAD_FILES') || UPDRAFTPLUS_RESTORE_DELETE_OLD_UPLOAD_FILES)) {
+				$working_dir = $info['path'];
+				$restore_timestamp = $updraftplus->jobdata_get('restore_timestamp');
+				$updraftplus->log('Scan and delete old files that are not presented in the restored backup...');
+				UpdraftPlus_Filesystem_Functions::delete_files_by_age($working_dir, $restore_timestamp, apply_filters('updraftplus_restore_uploads_paths_to_keep', array(), $working_dir, $this->ud_backup_is_multisite, $this->ud_multisite_selective_restore));
 			}
 			
 			// Update the job data each time we go round the loop, so that if it aborts, it can be resumed from the correct point
@@ -932,12 +955,13 @@ class Updraft_Restorer {
 	 *
 	 * In the 'ordinary' case of unzipping a UD zip backup, this method basically does some preparation, and then calls UpdraftPlus_Filesystem_Functions::unzip_file() for the actual unzipping
 	 *
-	 * @param  String		  $package - specify package - relative to UpdraftPlus::backups_dir_location()
-	 * @param  String|Boolean $type    - type of archive e.g. db.
+	 * @param string         $package             - specify package - relative to UpdraftPlus::backups_dir_location()
+	 * @param string|boolean $type                - type of archive e.g. db.
+	 * @param boolean        $use_fast_extraction - whether or not to use the fast extraction. If this is true, then files will be directly extracted to the designated location. Otherwise, they will be extracted to the 'upgrade' directory first.
 	 *
-	 * @return String|WP_Error If successful, then this indicates the working directory that the archive was unpacked in; a WP_Filesystem path
+	 * @return string|WP_Error If successful, then this indicates the working directory that the archive was unpacked in; a WP_Filesystem path
 	 */
-	private function unpack_package_archive($package, $type = false) {
+	private function unpack_package_archive($package, $type = false, $use_fast_extraction = false) {
 
 		global $wp_filesystem, $updraftplus;
 
@@ -963,7 +987,7 @@ class Updraft_Restorer {
 		// We need a working directory. This has a change from the WP core version - minimise path length
 		// N.B. It is deterministic; the same package file will get the same working directory
 		// $working_dir = $upgrade_folder . basename($package, '.zip');
-		$working_dir = $upgrade_folder.substr(md5($package), 0, 8);
+		$working_dir = ($use_fast_extraction) ? $wp_filesystem->wp_content_dir() : $upgrade_folder.substr(md5($package), 0, 8);
 		
 		if (preg_match('#\.zip$#i', $package)) {
 		
@@ -984,7 +1008,7 @@ class Updraft_Restorer {
 			
 		}
 
-		if (0 == $zip_starting_index) {
+		if (0 == $zip_starting_index && !$use_fast_extraction) {
 			// Clean up contents of upgrade directory beforehand.
 			$upgrade_files = $wp_filesystem->dirlist($upgrade_folder);
 			if (!empty($upgrade_files)) {
@@ -1006,12 +1030,17 @@ class Updraft_Restorer {
 		// Unzip package to working directory
 		if (preg_match('#\.zip$#i', $package)) {
 
-			$folders_to_include = array();
+			$folders_to_look = array();
+			$extract_matched_folders = 'extract_only';
 			
-			if ('themes' == $type && !$this->include_unspecified_themes) $folders_to_include = $this->themes_to_restore;
-			if ('plugins' == $type && !$this->include_unspecified_plugins) $folders_to_include = $this->plugins_to_restore;
+			if ('themes' == $type && !$this->include_unspecified_themes) $folders_to_look = $this->themes_to_restore;
+			if ('plugins' == $type && !$this->include_unspecified_plugins) $folders_to_look = $this->plugins_to_restore;
+			if ('uploads' == $type && apply_filters('updraftplus_restore_uploads_in_one_go', !class_exists('UpdraftPlusAddOn_MultiSite'))) {
+				$folders_to_look = apply_filters('updraftplus_restore_uploads_folders_to_look', $folders_to_look, $this->ud_multisite_selective_restore);
+				$extract_matched_folders = apply_filters('updraftplus_restore_uploads_extract_matched_folders', $extract_matched_folders, $this->ud_multisite_selective_restore);
+			}
 
-			$result = UpdraftPlus_Filesystem_Functions::unzip_file($package, $working_dir, $zip_starting_index, $folders_to_include);
+			$result = UpdraftPlus_Filesystem_Functions::unzip_file($package, $working_dir, $zip_starting_index, $folders_to_look, $extract_matched_folders);
 			
 		} elseif (preg_match('#\.tar(\.(gz|bz2))?$#i', $package)) {
 			
@@ -1676,6 +1705,14 @@ class Updraft_Restorer {
 
 		$updraftplus->log("restore_backup(backup_file=$backup_file, type=$type, info=".serialize($info).", last_one=$last_one)");
 
+		if (function_exists('set_time_limit')) @set_time_limit(1800);// phpcs:ignore Generic.PHP.NoSilencedErrors.Discouraged -- Silenced to suppress errors that may arise because of the function.
+
+		// Perform an improved restoration process for the 'uploads' entity which directly extracts the files to the 'wp-content/uploads' directory.
+		if (apply_filters('updraftplus_restore_uploads_in_one_go', !class_exists('UpdraftPlusAddOn_MultiSite')) && empty($this->ud_foreign) && 'uploads' == $type) {
+			$working_dir = $this->unpack_package_archive($backup_file, $type, true);
+			return is_wp_error($working_dir) ? $working_dir : true;
+		}
+
 		if ('db' == $type) {
 			$get_dir = '';
 		} else {
@@ -1696,8 +1733,6 @@ class Updraft_Restorer {
 		
 		$this->import_table_prefix = $import_table_prefix;
 		$this->final_import_table_prefix = $updraftplus->get_table_prefix(false);
-		
-		if (function_exists('set_time_limit')) @set_time_limit(1800);// phpcs:ignore Generic.PHP.NoSilencedErrors.Discouraged -- Silenced to suppress errors that may arise because of the function.
 
 		// Based upon how WP updates work, the following code unpacks the "package" (the backup archive) and then later its contents are moved to their destination.
 
@@ -2932,9 +2967,9 @@ class Updraft_Restorer {
 		// NO_BACKSLASH_ESCAPES is also in the default list, but it's good to make it explicit
 		$set_sql_mode = UpdraftPlus_Database_Utility::set_sql_mode(array('NO_AUTO_VALUE_ON_ZERO'), array('NO_BACKSLASH_ESCAPES'), $this->use_wpdb() ? null : $this->mysql_dbh);
 		if (false === $set_sql_mode) {
-			return new WP_Error('set_sql_mode_failed', __('At least one incompatible SQL mode remains set; the  restore cannot continue'));
+			return new WP_Error('set_sql_mode_failed', __('At least one incompatible SQL mode remains set; the  restore cannot continue', 'updraftplus'));
 		} elseif (null === $set_sql_mode && (!defined('UPDRAFTPLUS_ALLOW_SQL_MODE_FAILURE') || !UPDRAFTPLUS_ALLOW_SQL_MODE_FAILURE)) {
-			return new WP_Error('set_sql_mode_failed', __('It is not known whether the SQL mode could be correctly set; to continue the restore you must define UPDRAFTPLUS_ALLOW_SQL_MODE_FAILURE as true.'));
+			return new WP_Error('set_sql_mode_failed', __('It is not known whether the SQL mode could be correctly set; to continue the restore you must define UPDRAFTPLUS_ALLOW_SQL_MODE_FAILURE as true.', 'updraftplus'));
 		}
 
 		// Register restoration shutdown event so that we can set some MySQL global variables back to their original values
